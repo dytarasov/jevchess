@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jev Chess</title>
+<style>
+  :root {
+    --bg: #16181d; --panel: #1f232b; --line: #2e3440; --text: #e6e8ec; --muted: #8b93a3;
+    --light: #e9dcc0; --dark: #a9825a; --accent: #6fb3ff; --jev: #c792ea; --eng: #7fd18b;
+    --sel: rgba(111,179,255,.55); --last: rgba(255,214,90,.42); --check: rgba(255,70,70,.75);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px;
+          display: grid; grid-template-columns: minmax(0, 640px) minmax(280px, 1fr); gap: 22px; }
+  @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+  h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: .5px; }
+  h1 b { color: var(--jev); }
+  .sub { color: var(--muted); margin-bottom: 14px; }
+
+  .player { display: flex; justify-content: space-between; align-items: center;
+            padding: 6px 2px; font-weight: 600; }
+  .player .tag { font-size: 12px; font-weight: 500; color: var(--muted); }
+  .player.thinking .name::after { content: " · думает…"; color: var(--muted); font-weight: 400;
+                                  animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .35; } }
+
+  .board { position: relative; width: 100%; aspect-ratio: 1; display: grid;
+           grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr);
+           border-radius: 6px; overflow: hidden; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+           user-select: none; touch-action: none; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; }
+  .sq.l { background: var(--light); } .sq.d { background: var(--dark); }
+  .sq.last::before, .sq.sel::before, .sq.check::before { content: ""; position: absolute; inset: 0; }
+  .sq.last::before { background: var(--last); }
+  .sq.sel::before { background: var(--sel); }
+  .sq.check::before { background: radial-gradient(circle, var(--check) 20%, transparent 75%); }
+  .sq.hint::after { content: ""; position: absolute; width: 30%; height: 30%; border-radius: 50%;
+                    background: rgba(20,30,40,.28); }
+  .sq.hint.cap::after { width: 88%; height: 88%; background: transparent;
+                        border: 5px solid rgba(20,30,40,.28); }
+  .coord { position: absolute; font-size: 11px; font-weight: 700; opacity: .75; pointer-events: none; }
+  .coord.f { right: 4px; bottom: 2px; } .coord.r { left: 4px; top: 2px; }
+  .sq.l .coord { color: var(--dark); } .sq.d .coord { color: var(--light); }
+  .pc { position: relative; z-index: 2; font-size: min(9vw, 62px); line-height: 1; cursor: grab;
+        font-family: "Apple Symbols", "Segoe UI Symbol", "DejaVu Sans", serif; }
+  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 1px #000, 1px 1px 0 #000, -1px -1px 0 #000,
+                                    1px -1px 0 #000, -1px 1px 0 #000; }
+  .pc.b { color: #1b1b1b; text-shadow: 0 0 1px #fff8; }
+  .pc.drag { position: fixed; pointer-events: none; z-index: 50; transform: translate(-50%, -50%) scale(1.12); }
+  .pc.ghost { opacity: .3; }
+
+  .promo { position: absolute; inset: 0; z-index: 60; background: rgba(0,0,0,.55);
+           display: none; align-items: center; justify-content: center; gap: 8px; }
+  .promo.show { display: flex; }
+  .promo button { width: 80px; height: 80px; border-radius: 10px; border: 0; background: var(--light);
+                  font-size: 56px; cursor: pointer; }
+  .promo button:hover { background: #fff; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .side { display: flex; flex-direction: column; gap: 14px; }
+  .tabs { display: flex; gap: 6px; }
+  .tabs button, .btn { flex: 1; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line);
+                       background: #262b35; color: var(--text); cursor: pointer; font: inherit; }
+  .tabs button.on { background: var(--accent); color: #0d1320; border-color: var(--accent); font-weight: 600; }
+  .btn:hover, .tabs button:hover:not(.on) { background: #2e3441; }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .row label { color: var(--muted); min-width: 110px; }
+  select, input[type=range] { flex: 1; }
+  select { background: #262b35; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; }
+  .status { font-size: 15px; font-weight: 600; min-height: 22px; }
+  .status.err { color: #ff7b7b; }
+  .muted { color: var(--muted); font-size: 12px; }
+
+  .bars { display: flex; flex-direction: column; gap: 5px; margin-top: 8px; }
+  .bar { display: grid; grid-template-columns: 58px 1fr 44px; gap: 8px; align-items: center; font-size: 13px; }
+  .bar .t { height: 10px; background: #2a2f3a; border-radius: 5px; overflow: hidden; }
+  .bar .t i { display: block; height: 100%; background: var(--jev); border-radius: 5px; }
+  .bar.pick b { color: var(--jev); }
+
+  .lines { margin-top: 10px; display: flex; flex-direction: column; gap: 3px;
+           font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .lines div { display: flex; justify-content: space-between; gap: 10px; padding: 2px 4px; border-radius: 4px; }
+  .lines div.pick { background: #3a2f4a; }
+  .lines span:last-child { color: var(--muted); white-space: nowrap; }
+  .moves { max-height: 260px; overflow: auto; display: grid; grid-template-columns: 34px 1fr 1fr;
+           font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+  .moves span { padding: 2px 6px; }
+  .moves .n { color: var(--muted); }
+  .moves .cur { background: #33405a; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div>
+    <h1>♞ Jev <b>Chess</b></h1>
+    <div class="sub">Все решения принимает Jev (TypeSafe jev-1.13): какие варианты смотреть, как оценить позицию и какой ход сыграть. Код только применяет правила.</div>
+    <div class="player" id="topP"><span class="name"></span><span class="tag"></span></div>
+    <div class="board" id="board">
+      <div class="promo" id="promo"></div>
+    </div>
+    <div class="player" id="botP"><span class="name"></span><span class="tag"></span></div>
+  </div>
+
+  <div class="side">
+    <div class="panel">
+      <div class="tabs" id="modes">
+        <button data-mode="human" class="on">Я против Jev</button>
+        <button data-mode="engine">Stockfish против Jev</button>
+      </div>
+      <div id="humanOpts">
+        <div class="row"><label>Jev играет</label>
+          <select id="color" onchange="newGame()"><option value="black">Чёрными (я белыми)</option><option value="white">Белыми (я чёрными)</option><option value="random">Случайно</option></select>
+        </div>
+      </div>
+      <div id="engineOpts" hidden>
+        <div class="row"><label>Jev играет</label>
+          <select id="jevColor" onchange="newGame()"><option value="white">Белыми</option><option value="black">Чёрными</option></select>
+        </div>
+        <div class="row"><label>Сила Stockfish: <b id="skillV">3</b></label>
+          <input type="range" id="skill" min="0" max="20" value="3"></div>
+        <div class="row"><label>Время хода: <b id="mtV">0.3</b> с</label>
+          <input type="range" id="movetime" min="0.05" max="2" step="0.05" value="0.3"></div>
+        <div class="row"><label>Пауза между ходами</label>
+          <select id="delay"><option value="0">нет</option><option value="400" selected>0.4 с</option><option value="1200">1.2 с</option></select>
+        </div>
+      </div>
+      <div class="row"><label>Уровень Jev</label>
+        <select id="style">
+          <option value="think:24">Обдумывание · 24 позиции</option>
+          <option value="think:48" selected>Обдумывание · 48 позиций</option>
+          <option value="think:96">Обдумывание · 96 позиций</option>
+          <option value="intuition">Интуиция · один взгляд</option>
+        </select>
+      </div>
+      <div class="row">
+        <button class="btn" id="newGame">Новая партия</button>
+        <button class="btn" id="pauseBtn" hidden>Пауза</button>
+        <button class="btn" id="undo">Отменить ход</button>
+        <button class="btn" id="flip">⇅</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="status" id="status"></div>
+      <div class="muted" id="statusSub"></div>
+    </div>
+
+    <div class="panel">
+      <div><b>Что думал Jev</b> <span class="muted" id="jevMeta"></span></div>
+      <div class="bars" id="bars"><div class="muted">Jev ещё не ходил.</div></div>
+      <div class="lines" id="lines"></div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <b>Ходы</b><button class="btn" id="copyPgn" style="flex:0 0 auto;padding:4px 10px;font-size:12px">Копировать</button>
+      </div>
+      <div class="moves" id="moves"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const $ = s => document.querySelector(s);
+const boardEl = $("#board"), promoEl = $("#promo");
+
+let S = null;               // снимок с сервера: fen, legal, history, san, last, status, turn
+let mode = "human";
+let human = "white";        // цвет человека (режим human)
+let jevSide = "white";      // цвет Jev (режим engine)
+let orient = "white";
+let sel = null;             // выбранная клетка
+let busy = false;
+let paused = false;
+let gameId = 0;             // чтобы ответы старой партии не попадали в новую
+let evalText = "";
+let jevCost = 0;
+
+// ---------- API ----------
+async function api(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || r.statusText);
+  return d;
+}
+
+// ---------- FEN ----------
+function parseFen(fen) {
+  const map = {};
+  fen.split(" ")[0].split("/").forEach((row, i) => {
+    let f = 0;
+    for (const ch of row) {
+      if (/\d/.test(ch)) f += +ch;
+      else { map["abcdefgh"[f] + (8 - i)] = ch; f++; }
+    }
+  });
+  return map;
+}
+const colorOf = p => p === p.toUpperCase() ? "white" : "black";
+
+// ---------- отрисовка ----------
+function render() {
+  const pos = parseFen(S.fen);
+  const files = orient === "white" ? "abcdefgh" : "hgfedcba";
+  const ranks = orient === "white" ? "87654321" : "12345678";
+  const hints = sel ? S.legal.filter(m => m.slice(0, 2) === sel).map(m => m.slice(2, 4)) : [];
+  const last = S.last ? [S.last.slice(0, 2), S.last.slice(2, 4)] : [];
+  let kingSq = null;
+  if (S.status.check) {
+    const k = S.turn === "white" ? "K" : "k";
+    kingSq = Object.keys(pos).find(s => pos[s] === k);
+  }
+  boardEl.querySelectorAll(".sq").forEach(e => e.remove());
+  const frag = document.createDocumentFragment();
+  for (let r = 0; r < 8; r++) for (let f = 0; f < 8; f++) {
+    const sq = files[f] + ranks[r];
+    const light = ("abcdefgh".indexOf(sq[0]) + +sq[1]) % 2 === 1;
+    const el = document.createElement("div");
+    el.className = "sq " + (light ? "l" : "d");
+    el.dataset.sq = sq;
+    if (last.includes(sq)) el.classList.add("last");
+    if (sel === sq) el.classList.add("sel");
+    if (kingSq === sq) el.classList.add("check");
+    if (hints.includes(sq)) { el.classList.add("hint"); if (pos[sq]) el.classList.add("cap"); }
+    if (r === 7) el.insertAdjacentHTML("beforeend", `<span class="coord f">${sq[0]}</span>`);
+    if (f === 0) el.insertAdjacentHTML("beforeend", `<span class="coord r">${sq[1]}</span>`);
+    const p = pos[sq];
+    if (p) {
+      const pc = document.createElement("span");
+      pc.className = "pc " + (colorOf(p) === "white" ? "w" : "b");
+      pc.textContent = GLYPH[p.toLowerCase()] + "︎";
+      el.appendChild(pc);
+    }
+    frag.appendChild(el);
+  }
+  boardEl.insertBefore(frag, promoEl);
+  renderPlayers(); renderMoves(); renderStatus();
+}
+
+function names() {
+  if (mode === "human") return { white: human === "white" ? "Вы" : "Jev", black: human === "black" ? "Вы" : "Jev" };
+  return { white: jevSide === "white" ? "Jev" : "Stockfish", black: jevSide === "black" ? "Jev" : "Stockfish" };
+}
+function renderPlayers() {
+  const n = names();
+  const top = orient === "white" ? "black" : "white", bot = orient === "white" ? "white" : "black";
+  for (const [id, c] of [["#topP", top], ["#botP", bot]]) {
+    const el = $(id);
+    el.querySelector(".name").textContent = (c === "white" ? "○ " : "● ") + n[c];
+    el.querySelector(".tag").textContent = n[c] === "Stockfish" ? `уровень ${$("#skill").value}` : n[c] === "Jev" ? "typesafe/jev-1.13" : "";
+    el.classList.toggle("thinking", busy && S.turn === c && !S.status.over);
+  }
+}
+function renderMoves() {
+  const box = $("#moves"); box.innerHTML = "";
+  for (let i = 0; i < S.san.length; i += 2) {
+    box.insertAdjacentHTML("beforeend",
+      `<span class="n">${i / 2 + 1}.</span><span class="${i === S.san.length - 1 ? "cur" : ""}">${S.san[i]}</span>` +
+      `<span class="${i + 1 === S.san.length - 1 ? "cur" : ""}">${S.san[i + 1] || ""}</span>`);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+function renderStatus(err) {
+  const st = $("#status"), sub = $("#statusSub");
+  st.classList.toggle("err", !!err);
+  if (err) { st.textContent = "Ошибка: " + err; return; }
+  const n = names();
+  if (S.status.over) {
+    st.textContent = S.status.winner ? `${n[S.status.winner]} побеждает — ${S.status.reason}` : `Ничья — ${S.status.reason}`;
+    sub.textContent = `Результат ${S.status.result}. ${jevCost ? "Jev потратил $" + jevCost.toFixed(5) : ""}`;
+    return;
+  }
+  const who = n[S.turn];
+  st.textContent = (S.status.check ? "Шах! " : "") + (who === "Вы" ? "Ваш ход" : `Ходит ${who}`) + (paused ? " (пауза)" : "");
+  sub.textContent = [evalText && `оценка Stockfish: ${evalText}`, jevCost && `Jev потратил $${jevCost.toFixed(5)}`].filter(Boolean).join(" · ");
+}
+function renderJev(info) {
+  const bars = $("#bars"); bars.innerHTML = "";
+  if (info.forced) { bars.innerHTML = `<div class="muted">Единственный легальный ход: <b>${info.san}</b></div>`; $("#jevMeta").textContent = ""; $("#lines").innerHTML = ""; return; }
+  for (const [san, p] of info.top) {
+    bars.insertAdjacentHTML("beforeend",
+      `<div class="bar ${san === info.san ? "pick" : ""}"><b>${san}</b><div class="t"><i style="width:${(p * 100).toFixed(1)}%"></i></div><span>${(p * 100).toFixed(0)}%</span></div>`);
+  }
+  const ln = $("#lines"); ln.innerHTML = "";
+  if (info.lines) {
+    ln.insertAdjacentHTML("beforeend", `<div class="muted" style="font-family:inherit">Просмотренные линии и оценка Jev в их конце:</div>`);
+    for (const l of info.lines)
+      ln.insertAdjacentHTML("beforeend", `<div class="${l.san === info.san ? "pick" : ""}"><span>${l.line}</span><span>${l.label}</span></div>`);
+    $("#jevMeta").textContent = `· ${info.positions} позиций · ${info.latency} с`;
+  } else $("#jevMeta").textContent = `· ${info.latency} с`;
+}
+
+// ---------- ходы ----------
+function myTurn() { return mode === "human" && !busy && !S.status.over && S.turn === human; }
+
+async function humanMove(from, to) {
+  const cands = S.legal.filter(m => m.slice(0, 4) === from + to);
+  if (!cands.length) return false;
+  let uci = cands[0];
+  if (cands.length > 1) uci = await askPromotion(from, to);
+  if (!uci) return true;
+  sel = null;
+  const g = gameId;
+  try {
+    busy = true;
+    const d = await api("/api/move", { moves: S.history, move: uci });
+    if (g !== gameId) return true;
+    S = d; render();
+  } catch (e) { renderStatus(e.message); }
+  finally { if (g === gameId) busy = false; }
+  loop();
+  return true;
+}
+
+function askPromotion(from, to) {
+  return new Promise(res => {
+    const white = S.turn === "white";
+    promoEl.innerHTML = "";
+    for (const p of ["q", "r", "b", "n"]) {
+      const b = document.createElement("button");
+      b.innerHTML = `<span class="pc ${white ? "w" : "b"}">${GLYPH[p]}︎</span>`;
+      b.onclick = () => { promoEl.classList.remove("show"); res(from + to + p); };
+      promoEl.appendChild(b);
+    }
+    promoEl.onclick = e => { if (e.target === promoEl) { promoEl.classList.remove("show"); res(null); } };
+    promoEl.classList.add("show");
+  });
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function loop() {
+  if (busy || S.status.over || paused) return;
+  const turn = S.turn;
+  const [style, budget] = $("#style").value.split(":");
+  let path, body = { moves: S.history, style, budget: +budget || 0 };
+  if (mode === "human") {
+    if (turn === human) return;
+    path = "/api/jev";
+  } else {
+    if (turn === jevSide) path = "/api/jev";
+    else { path = "/api/engine"; body.skill = +$("#skill").value; body.movetime = +$("#movetime").value; }
+  }
+  const g = gameId;
+  busy = true; renderPlayers();
+  try {
+    const d = await api(path, body);
+    if (g !== gameId) return;
+    S = d;
+    if (d.by === "jev") { renderJev(d.info); jevCost += d.info.cost || 0; }
+    if (d.by === "engine") evalText = d.info.eval || "";
+    busy = false; render();
+    if (mode === "engine") await sleep(+$("#delay").value);
+    if (g === gameId) loop();
+  } catch (e) {
+    if (g !== gameId) return;
+    busy = false; renderPlayers(); renderStatus(e.message);
+  }
+}
+
+// ---------- мышь: клик и перетаскивание ----------
+let drag = null;
+boardEl.addEventListener("pointerdown", e => {
+  const sqEl = e.target.closest(".sq"); if (!sqEl || !myTurn()) return;
+  const sq = sqEl.dataset.sq;
+  const own = S.legal.some(m => m.slice(0, 2) === sq);
+  if (sel && sel !== sq && S.legal.some(m => m.slice(0, 4) === sel + sq)) { humanMove(sel, sq); return; }
+  if (!own) { sel = null; render(); return; }
+  sel = sq; render();
+  const pc = boardEl.querySelector(`.sq[data-sq="${sq}"] .pc`);
+  if (!pc) return;
+  const ghost = pc.cloneNode(true);
+  ghost.classList.add("drag");
+  ghost.style.fontSize = getComputedStyle(pc).fontSize;
+  ghost.style.left = e.clientX + "px"; ghost.style.top = e.clientY + "px";
+  document.body.appendChild(ghost);
+  pc.classList.add("ghost");
+  drag = { from: sq, ghost, moved: false };
+  boardEl.setPointerCapture(e.pointerId);
+});
+boardEl.addEventListener("pointermove", e => {
+  if (!drag) return;
+  drag.moved = true;
+  drag.ghost.style.left = e.clientX + "px"; drag.ghost.style.top = e.clientY + "px";
+});
+boardEl.addEventListener("pointerup", async e => {
+  if (!drag) return;
+  const { from, ghost, moved } = drag; drag = null; ghost.remove();
+  const target = document.elementsFromPoint(e.clientX, e.clientY).find(el => el.classList?.contains("sq"));
+  if (moved && target && target.dataset.sq !== from) {
+    if (await humanMove(from, target.dataset.sq)) return;
+  }
+  render(); // вернуть фигуру на место, выделение остаётся — можно доходить кликом
+});
+
+// ---------- управление ----------
+async function newGame() {
+  gameId++; busy = false; paused = false; sel = null; evalText = ""; jevCost = 0;
+  if (mode === "human") {
+    const jc = $("#color").value === "random" ? (Math.random() < .5 ? "white" : "black") : $("#color").value;
+    human = jc === "white" ? "black" : "white";
+    orient = human;
+  } else {
+    jevSide = $("#jevColor").value; orient = jevSide;
+  }
+  $("#pauseBtn").textContent = "Пауза";
+  $("#bars").innerHTML = `<div class="muted">Jev ещё не ходил.</div>`; $("#jevMeta").textContent = ""; $("#lines").innerHTML = "";
+  S = await api("/api/state", { moves: [] });
+  render(); loop();
+}
+
+async function undo() {
+  if (mode !== "human" || !S.history.length) return;
+  gameId++; busy = false; sel = null;
+  let h = S.history.slice();
+  h.pop();
+  if (h.length % 2 !== (human === "white" ? 0 : 1)) h.pop();   // откатить до своего хода
+  S = await api("/api/state", { moves: h });
+  render(); loop();
+}
+
+document.querySelectorAll("#modes button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("#modes button").forEach(x => x.classList.toggle("on", x === b));
+  mode = b.dataset.mode;
+  $("#humanOpts").hidden = mode !== "human"; $("#engineOpts").hidden = mode !== "engine";
+  $("#pauseBtn").hidden = mode !== "engine"; $("#undo").hidden = mode !== "human";
+  newGame();
+});
+$("#newGame").onclick = newGame;
+$("#undo").onclick = undo;
+$("#flip").onclick = () => { orient = orient === "white" ? "black" : "white"; render(); };
+$("#pauseBtn").onclick = () => {
+  paused = !paused; $("#pauseBtn").textContent = paused ? "Продолжить" : "Пауза";
+  renderStatus(); if (!paused) loop();
+};
+$("#skill").oninput = e => { $("#skillV").textContent = e.target.value; renderPlayers(); };
+$("#movetime").oninput = e => { $("#mtV").textContent = (+e.target.value).toFixed(2); };
+$("#copyPgn").onclick = () => {
+  let s = ""; S.san.forEach((m, i) => { s += (i % 2 ? "" : `${i / 2 + 1}. `) + m + " "; });
+  navigator.clipboard.writeText(s.trim() + (S.status.over ? " " + S.status.result : ""));
+};
+
+fetch("/api/info").then(r => r.json()).then(d => {
+  if (!d.engine) {
+    const b = document.querySelector('[data-mode="engine"]');
+    b.disabled = true; b.title = d.engine_error;
+  }
+});
+newGame();
+</script>
+</body>
+</html>
