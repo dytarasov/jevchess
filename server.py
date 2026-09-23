@@ -28,7 +28,7 @@ import time
 import chess
 import chess.engine
 
-from jev import Jev, JevError
+from jev import Jev, JevError, JevRateLimited
 from jevsearch import JevThinker, base_state, policy_question
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -119,7 +119,7 @@ class JevPlayer:
     """
 
     def __init__(self):
-        self.jev = Jev(timeout=30, retries=5)
+        self.jev = Jev(timeout=30, retries=4, rate_limit_wait=45)
         self.thinker = JevThinker(self.jev)
 
     def move(self, board: chess.Board, style: str = "think", budget: int = 48) -> dict:
@@ -244,6 +244,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         except BadMove as e:
             self.send_json(400, {"error": str(e)})
+        except JevRateLimited as e:
+            self.send_json(429, {"error": "Jev упёрся в лимит OpenRouter", "retry_after": e.retry_after or 5})
         except JevError as e:
             self.send_json(502, {"error": f"Jev: {e}"})
         except Exception as e:  # сеть, таймауты, всё прочее

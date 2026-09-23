@@ -185,7 +185,7 @@ let jevCost = 0;
 async function api(path, body) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const d = await r.json();
-  if (!r.ok) throw new Error(d.error || r.statusText);
+  if (!r.ok) throw Object.assign(new Error(d.error || r.statusText), { status: r.status, retryAfter: d.retry_after });
   return d;
 }
 
@@ -359,7 +359,15 @@ async function loop() {
     if (g === gameId) loop();
   } catch (e) {
     if (g !== gameId) return;
-    busy = false; renderPlayers(); renderStatus(e.message);
+    busy = false; renderPlayers();
+    if (e.status === 429) {                       // лимит OpenRouter — ждём и повторяем сами
+      const wait = Math.ceil(e.retryAfter || 5);
+      renderStatus(`${e.message}, повтор через ${wait} с`);
+      await sleep(wait * 1000);
+      if (g === gameId) loop();
+      return;
+    }
+    renderStatus(e.message);
   }
 }
 

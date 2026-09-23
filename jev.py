@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import random
 import ssl
 import threading
 import time
@@ -32,7 +33,7 @@ DEFAULT_URL = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_MODEL = "typesafe/jev-1.13"
 
 __all__ = [
-    "Jev", "JevError", "noul", "choice", "score",
+    "Jev", "JevError", "JevRateLimited", "noul", "choice", "score",
     "Noul", "Choice", "Score", "Answers", "UNSURE",
 ]
 
@@ -40,10 +41,15 @@ __all__ = [
 class JevError(RuntimeError):
     """Ошибка транспорта или валидации на стороне API."""
 
-    def __init__(self, status: int, body: str):
+    def __init__(self, status: int, body: str, retry_after: float | None = None):
         self.status = status
         self.body = body
+        self.retry_after = retry_after
         super().__init__(f"HTTP {status}: {body[:500]}")
+
+
+class JevRateLimited(JevError):
+    """429, который не отпустил за отведённое время. `retry_after` — сколько ещё ждать, с."""
 
 
 class _Unsure:
@@ -271,6 +277,7 @@ class Jev:
         base_url: str = DEFAULT_URL,
         timeout: float = 60.0,
         retries: int = 3,
+        rate_limit_wait: float = 60.0,
         cache_dir: str | None = None,
         concurrency: int = 8,
     ):
@@ -281,6 +288,12 @@ class Jev:
         self.base_url = base_url
         self.timeout = timeout
         self.retries = retries
+        # Сколько суммарно готовы ждать, пока OpenRouter отпустит 429, прежде чем сдаться.
+        self.rate_limit_wait = rate_limit_wait
+        # Общая «пауза» на весь клиент: после 429 все потоки ждут до этого момента,
+        # а не долбят API наперегонки и не продлевают лимит друг другу.
+        self._cooldown_until = 0.0
+        self.rate_limited = 0
         self.concurrency = concurrency
         self.cache_dir = cache_dir
         if cache_dir:
@@ -394,9 +407,21 @@ class Jev:
     # ---------------- транспорт ----------------
 
     def _post(self, payload: dict) -> dict:
+        """POST с повторами.
+
+        * 429 — ждём столько, сколько просит сервер (Retry-After / X-RateLimit-Reset),
+          иначе экспоненциально с разбросом; пауза общая для всех потоков клиента.
+          Повторяем, пока не исчерпан бюджет ожидания `rate_limit_wait`.
+        * 5xx и сетевые ошибки — `retries` попыток с экспоненциальной задержкой.
+        * прочие 4xx — сразу ошибка: повтор не поможет.
+        """
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        deadline = time.monotonic() + self.rate_limit_wait
+        failures = 0          # 5xx/сеть
+        limited = 0           # подряд 429
         last: Exception | None = None
-        for attempt in range(self.retries):
+        while True:
+            self._wait_cooldown(deadline)
             req = urllib.request.Request(
                 self.base_url,
                 data=body,
@@ -411,15 +436,38 @@ class Jev:
                     return json.loads(f.read().decode("utf-8"))
             except urllib.error.HTTPError as e:
                 text = e.read().decode("utf-8", "replace")
+                if e.code == 429:
+                    limited += 1
+                    with self._lock:
+                        self.rate_limited += 1
+                    hint = _retry_after(e.headers, text)
+                    wait = hint if hint is not None else min(20.0, 0.5 * 2 ** (limited - 1))
+                    wait = min(30.0, max(0.25, wait)) * random.uniform(1.0, 1.25)
+                    left = deadline - time.monotonic()
+                    if wait > left:
+                        raise JevRateLimited(429, text, retry_after=round(wait, 1)) from None
+                    with self._lock:
+                        self._cooldown_until = max(self._cooldown_until, time.monotonic() + wait)
+                    continue
                 # 4xx (кроме 429) — наша вина, повтор не поможет
-                if e.code < 500 and e.code != 429:
+                if e.code < 500:
                     raise JevError(e.code, text) from None
                 last = JevError(e.code, text)
             except Exception as e:  # сеть, таймаут
                 last = e
-            if attempt < self.retries - 1:
-                time.sleep(0.4 * (2 ** attempt))
-        raise last  # type: ignore[misc]
+            failures += 1
+            if failures >= self.retries:
+                raise last  # type: ignore[misc]
+            time.sleep(0.4 * 2 ** (failures - 1) * random.uniform(1.0, 1.5))
+
+    def _wait_cooldown(self, deadline: float) -> None:
+        with self._lock:
+            until = self._cooldown_until
+        pause = until - time.monotonic()
+        if pause > 0:
+            if time.monotonic() + pause > deadline:
+                raise JevRateLimited(429, "rate limit cooldown", retry_after=round(pause, 1))
+            time.sleep(pause)
 
     # ---------------- кэш ----------------
 
@@ -450,6 +498,34 @@ class Jev:
     def stats(self) -> str:
         return (f"{self.calls} запросов, {self.total_input_tokens} входных токенов, "
                 f"${self.total_cost:.6f}, попаданий в кэш: {self.cache_hits}")
+
+
+def _retry_after(headers: Any, body: str) -> float | None:
+    """Сколько секунд просит подождать сервер. OpenRouter кладёт лимитные заголовки
+    и в HTTP-ответ, и в JSON (`error.metadata.headers`); X-RateLimit-Reset — в мс эпохи."""
+    sources = [headers or {}]
+    try:
+        sources.append(json.loads(body)["error"]["metadata"]["headers"])
+    except Exception:
+        pass
+    now = time.time()
+    for h in sources:
+        ra = h.get("Retry-After") or h.get("retry-after")
+        if ra:
+            try:
+                return float(ra)
+            except ValueError:
+                pass
+        reset = h.get("X-RateLimit-Reset") or h.get("x-ratelimit-reset")
+        if reset:
+            try:
+                r = float(reset)
+                r = r / 1000 if r > 1e11 else r        # мс или с эпохи
+                if r > now:
+                    return r - now
+            except ValueError:
+                pass
+    return None
 
 
 def _prepare_state(state: Any) -> Any:
