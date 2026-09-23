@@ -30,21 +30,40 @@ from dataclasses import dataclass, field
 import chess
 
 from jev import Jev, choice, score
-from jevsearch import (ADVANTAGE_LEVELS, MATERIAL_LEVELS, base_state, describe,
+from jevsearch import (ADVANTAGE_LEVELS, base_state, describe,
                        policy_question, _numbered)
 
 MATE = 100.0
-MAT_PAWNS = [-9, -5, -3, -1, 0, 1, 3, 5, 9]      # уровни MATERIAL_LEVELS в пешках (за белых)
 ADV_PAWNS = [-6, -3, -1, 0, 1, 3, 6]             # уровни ADVANTAGE_LEVELS в пешках (за белых)
 
 ADVANTAGE_Q = score(
     "Оцени позицию: у кого перевес с учётом материала, угроз и безопасности королей?",
     ADVANTAGE_LEVELS,
 )
-MATERIAL_Q = score(
-    "Посчитай материал на доске (пешка 1, конь/слон 3, ладья 5, ферзь 9). У кого больше и насколько?",
-    MATERIAL_LEVELS,
-)
+# Материал Jev считает поштучно: «сколько у белых ладей?» и т.д. Один общий вопрос
+# «у кого больше материала» он путал (ошибка ≥ 3 пешек в 52 из 150 позиций),
+# а поштучный подсчёт верен в 96% ответов (ошибка ≥ 3 пешек — 1 из 150).
+# Код только складывает ответы Jev с общепринятой ценностью фигур.
+PIECE_VALUE = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+_PLURAL = {chess.PAWN: "пешек", chess.KNIGHT: "коней", chess.BISHOP: "слонов",
+           chess.ROOK: "ладей", chess.QUEEN: "ферзей"}
+COUNT_QS = {
+    f"{'w' if color else 'b'}{pt}": choice(
+        f"Сколько {_PLURAL[pt]} у {'белых' if color else 'чёрных'} сейчас на доске?",
+        {str(i): str(i) for i in range(9 if pt == chess.PAWN else 4)},
+    )
+    for color in (chess.WHITE, chess.BLACK) for pt in PIECE_VALUE
+}
+
+
+def counted_material(a) -> float:
+    """Материал за белых в пешках — по поштучным ответам Jev (матожидание)."""
+    total = 0.0
+    for pt, val in PIECE_VALUE.items():
+        w = sum(int(k) * p for k, p in a[f"w{pt}"].probabilities.items())
+        b = sum(int(k) * p for k, p in a[f"b{pt}"].probabilities.items())
+        total += val * (w - b)
+    return total
 
 
 @dataclass
@@ -98,13 +117,12 @@ class DeepThinker:
 
     def _ask(self, board: chess.Board, with_policy: bool) -> tuple[dict, float, float, int]:
         legal = list(board.legal_moves)
-        qs = {"advantage": ADVANTAGE_Q, "material": MATERIAL_Q}
+        qs = {"advantage": ADVANTAGE_Q, **COUNT_QS}
         if with_policy and len(legal) > 1:
             qs["policy"] = policy_question(board, legal)
         a = self.jev.ask(base_state(board), qs)
         sign = 1 if board.turn == chess.WHITE else -1
-        v = sign * (expectation(a.material.probabilities, MAT_PAWNS)
-                    + 0.5 * expectation(a.advantage.probabilities, ADV_PAWNS))
+        v = sign * (counted_material(a) + 0.5 * expectation(a.advantage.probabilities, ADV_PAWNS))
         priors = {}
         if "policy" in qs:
             by_san = {board.san(m): m for m in legal}
