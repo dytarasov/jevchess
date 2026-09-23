@@ -9,6 +9,8 @@ bench.py — матч Jev против Stockfish (или Jev против Jev) �
 """
 
 import argparse
+import json
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -59,7 +61,8 @@ def play(jev_style: str, budget: int, opponent: str, jev_white: bool, movetime: 
         if eng:
             eng.quit()
     return {"white": white, "black": black, "result": result, "reason": reason, "score": score,
-            "plies": len(board.move_stack), "rate_limited": jp.jev.rate_limited, **stats}
+            "plies": len(board.move_stack), "rate_limited": jp.jev.rate_limited, **stats,
+            "jev_white": jev_white, "moves": [m.uci() for m in board.move_stack]}
 
 
 def main() -> None:
@@ -77,6 +80,10 @@ def main() -> None:
     with ThreadPoolExecutor(a.parallel) as ex:
         games = list(ex.map(lambda w: play(a.jev, a.budget, a.vs, w, a.movetime), jobs))
 
+    os.makedirs("bench_games", exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    with open(f"bench_games/{stamp}-{a.jev}-vs-{a.vs}.json", "w") as f:
+        json.dump(games, f)
     for g in games:
         print(f"{g['white']:>10} — {g['black']:<10} {g['result']:<8} {g['reason']:<22} "
               f"{g['plies']:>3} полуходов, 429×{g['rate_limited']}")
