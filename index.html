@@ -130,9 +130,9 @@
       </div>
       <div class="row"><label>Уровень Jev</label>
         <select id="style">
-          <option value="think:24">Обдумывание · 24 позиции</option>
-          <option value="think:48" selected>Обдумывание · 48 позиций</option>
-          <option value="think:96">Обдумывание · 96 позиций</option>
+          <option value="deep_max">Максимум · ~240 позиций × 2 ракурса</option>
+          <option value="deep" selected>Глубокий расчёт · ~240 позиций</option>
+          <option value="think:48">Обдумывание (MCTS) · 48 позиций</option>
           <option value="intuition">Интуиция · один взгляд</option>
         </select>
       </div>
@@ -288,7 +288,7 @@ function renderJev(info) {
   }
   const ln = $("#lines"); ln.innerHTML = "";
   if (info.lines) {
-    ln.insertAdjacentHTML("beforeend", `<div class="muted" style="font-family:inherit">Просмотренные линии и оценка Jev в их конце:</div>`);
+    ln.insertAdjacentHTML("beforeend", `<div class="muted" style="font-family:inherit">Просмотренные линии (с лучшими, по мнению Jev, ответами соперника) и его оценка:</div>`);
     for (const l of info.lines)
       ln.insertAdjacentHTML("beforeend", `<div class="${l.san === info.san ? "pick" : ""}"><span>${l.line}</span><span>${l.label}</span></div>`);
     $("#jevMeta").textContent = `· ${info.positions} позиций · ${info.latency} с`;

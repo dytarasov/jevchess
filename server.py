@@ -29,6 +29,7 @@ import chess
 import chess.engine
 
 from jev import Jev, JevError, JevRateLimited
+from jevdeep import DeepThinker, Settings
 from jevsearch import JevThinker, base_state, policy_question
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -113,20 +114,29 @@ def snapshot(board: chess.Board) -> dict:
 # --------------------------------------------------------------------------
 
 class JevPlayer:
-    """Два уровня:
+    """Три уровня:
       intuition — один запрос: Jev смотрит на позицию и сразу выбирает ход;
-      think     — Jev обдумывает дерево вариантов (см. jevsearch.py) и решает сам.
+      think     — Jev обдумывает дерево вариантов, MCTS (jevsearch.py);
+      deep      — выборочный минимакс с досчётом разменов (jevdeep.py);
+      deep_max  — то же, но каждая оценка усредняется с зеркальной доской (×2 запросов).
+    Во всех случаях ход выбирает Jev.
     """
 
     def __init__(self):
         self.jev = Jev(timeout=30, retries=4, rate_limit_wait=45)
         self.thinker = JevThinker(self.jev)
+        self.deep = DeepThinker(self.jev)
+        self.deep_max = DeepThinker(self.jev, Settings(mirror=True))
 
     def move(self, board: chess.Board, style: str = "think", budget: int = 48) -> dict:
         legal = list(board.legal_moves)
         if len(legal) == 1:
             m = legal[0]
             return {"uci": m.uci(), "san": board.san(m), "top": [[board.san(m), 1.0]], "forced": True}
+
+        if style in ("deep", "deep_max"):
+            thinker = self.deep_max if style == "deep_max" else self.deep
+            return {**thinker.think(board), "style": style}
 
         if style == "think":
             t0 = time.perf_counter()
@@ -229,7 +239,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 raise BadMove("партия уже окончена")
 
             if self.path == "/api/jev":
-                info = JEV.move(board, str(req.get("style", "think")), req.get("budget", 48))
+                info = JEV.move(board, str(req.get("style", "deep")), req.get("budget", 48))
                 who = "jev"
             elif self.path == "/api/engine":
                 if ENGINE is None:

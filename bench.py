@@ -64,7 +64,7 @@ def play(jev_style: str, budget: int, opponent: str, jev_white: bool, movetime: 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--jev", default="think", choices=["think", "intuition"])
+    ap.add_argument("--jev", default="think", choices=["deep", "deep_max", "think", "intuition"])
     ap.add_argument("--budget", type=int, default=48, help="позиций на обдумывание хода")
     ap.add_argument("--vs", default="sf0", help="sf0..sf20 (уровень Stockfish) или intuition/think")
     ap.add_argument("--games", type=int, default=4)
