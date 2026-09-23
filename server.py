@@ -119,7 +119,7 @@ class JevPlayer:
     """
 
     def __init__(self):
-        self.jev = Jev(timeout=30, retries=2)
+        self.jev = Jev(timeout=30, retries=5)
         self.thinker = JevThinker(self.jev)
 
     def move(self, board: chess.Board, style: str = "think", budget: int = 48) -> dict:

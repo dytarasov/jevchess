@@ -246,15 +246,24 @@ class JevThinker:
             if not wave:
                 continue
 
-            results = list(self.pool.map(lambda p: self.evaluate(p[-1].board), wave))
-            for path, (pr, val, c) in zip(wave, results):
+            futures = [self.pool.submit(self.evaluate, p[-1].board) for p in wave]
+            failed = 0
+            for path, fut in zip(wave, futures):
                 for n in path:
                     n.vloss -= 1
+                try:
+                    pr, val, c = fut.result()
+                except Exception:
+                    # лимиты/сеть: эту позицию просто не раскрываем в этой волне
+                    failed += 1
+                    continue
                 self.expand(path[-1], pr, val)
                 self.backup(path, val)
                 cost += c
+                positions += 1
             calls += len(wave)
-            positions += len(wave)
+            if failed == len(wave):
+                break  # Jev недоступен — решаем по тому, что успели обдумать
 
         notes, lines = self.notes(root)
         decision, dcost = self.decide(board, notes)
